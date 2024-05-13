@@ -81,7 +81,8 @@ class nnUNetTrainer(object):
         # you say now:
         # complexity very, very bad
         # given choice between complexity or one on one against t-rex, grug take t-rex: at least grug see t-rex
-        # complexity is spirit demon that enter codebase through well-meaning but ultimately very clubbable non grug-brain developers and project managers who not fear complexity spirit demon or even know about sometime
+        # complexity is spirit demon that enter codebase through well-meaning but ultimately very clubbable non grug-brain developers
+        # and project managers who not fear complexity spirit demon or even know about sometime
         # one day code base understandable and grug can get work done, everything good!
         # next day impossible: complexity demon spirit has entered code and very dangerous situation!
 
@@ -676,6 +677,72 @@ class nnUNetTrainer(object):
         _ = next(mt_gen_val)
         return mt_gen_train, mt_gen_val
 
+    @staticmethod
+    def get_minimal_training_transforms(
+            patch_size: Union[np.ndarray, Tuple[int]],
+            rotation_for_DA: RandomScalar,
+            deep_supervision_scales: Union[List, Tuple, None],
+            mirror_axes: Tuple[int, ...],
+            do_dummy_2d_data_aug: bool,
+            use_mask_for_norm: List[bool] = None,
+            is_cascaded: bool = False,
+            foreground_labels: Union[Tuple[int, ...], List[int]] = None,
+            regions: List[Union[List[int], Tuple[int, ...], int]] = None,
+            ignore_label: int = None,
+    ) -> BasicTransform:
+        transforms = []
+        if do_dummy_2d_data_aug:
+            ignore_axes = (0,)
+            transforms.append(Convert3DTo2DTransform())
+            patch_size_spatial = patch_size[1:]
+        else:
+            patch_size_spatial = patch_size
+            ignore_axes = None
+        
+        transforms.append(
+            SpatialTransform(
+                patch_size_spatial,
+                do_elastic_deform=False,
+                do_rotation=False,
+                do_scale=False,
+                patch_center_dist_from_border=0,
+                random_crop=False,
+                p_elastic_deform=0,
+                p_rotation=0,
+                rotation=rotation_for_DA,
+                p_scaling=0,
+                scaling=(1.0, 1.0),
+                p_synchronize_scaling_across_axes=1,
+                bg_style_seg_sampling=False  # , mode_seg='nearest'
+            )
+        )
+        
+        transforms.append(
+            RemoveLabelTansform(-1, 0)
+        )
+
+        if is_cascaded:
+            transforms.append(
+                MoveSegAsOneHotToDataTransform(
+                    source_channel_idx=1,
+                    all_labels=foreground_labels,
+                    remove_channel_from_source=True
+                )
+            )
+
+        if regions is not None:
+            # the ignore label must also be converted
+            transforms.append(
+                ConvertSegmentationToRegionsTransform(
+                    regions=list(regions) + [ignore_label] if ignore_label is not None else regions,
+                    channel_in_seg=0
+                )
+            )
+
+        if deep_supervision_scales is not None:
+            transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
+        return ComposeTransforms(transforms)
+        
     @staticmethod
     def get_training_transforms(
             patch_size: Union[np.ndarray, Tuple[int]],
